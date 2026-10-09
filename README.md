@@ -10,13 +10,13 @@ On any other machine, we would run a sender (yes, we only have two machines so
 we'll run a sender adn a receiver on one but for the sake of project abstraction
 imagine we have more than two). To send a given signal, we would need to:
 
-a) have a device/modality or type handler, something that checks that that device is connected
+a) have a device/modality or type handler (a separate client per device), something that checks that that device is connected
 to the computer or is currently sending it signals or that signals of this type
 are being currently sent to the computer. This device handler would then take
 that signal, and use the central sender code, which is the same for all signals,
 to send the data to the central server.
 
-b) The device handler are different for different devices and data types. For example,
+b) The device handlers/clients are different for different devices and data types. For example,
 the Trigino EMG uses its own TCP-server based program to communicate with devices called TCU. The program
 documentation is only available with the SDK kit which comes with the device and explains
 how to build clients to communicate with the device. Since we don't have it yet,
@@ -83,7 +83,7 @@ Task                                         Level of Doneness
 Build a central receiver server              Jintae built the skeleton, plumbing not 
                                              workable yet.
 
-Build device / modality handlers             Not Done, would be one file per signal type,
+Build device / modality clients              Not Done, would be one file per signal type,
                                              some will be easier than others.
 
 Build reusable sender                        Done, needs error handling, right now does
