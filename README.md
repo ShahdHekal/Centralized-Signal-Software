@@ -1,3 +1,4 @@
+```
 For this side project, we've elected to build and handle signal transfer across
 machines from scratch using C++. This consists of having a central server on the
 windows machine with a listening socket that's always looking for a signal on
@@ -106,3 +107,4 @@ and playback of the signal streams.
 
 
 
+```
