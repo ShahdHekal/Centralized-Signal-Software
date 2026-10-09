@@ -1,4 +1,4 @@
-# Project Roadmap
+# Project Roadmap and TODOs
 ```
 For this side project, we've elected to build and handle signal transfer across
 machines from scratch using C++. This consists of having a central server on the
