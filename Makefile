@@ -1,9 +1,14 @@
 CXX      := clang++
 CXXFLAGS := -std=c++17 -Wall -Wextra -g
 
-TARGETS := udp_server
+TARGETS := TCP_server
 
 all: $(TARGETS)
 
-udp_server: udp_server.cpp
+TCP_server: TCP_server.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $<
+
+clean:
+	rm -rf $(TARGETS) *.dSYM
+
+.PHONY: all clean
