@@ -81,17 +81,18 @@ Backend:
 Task                                         Level of Doneness
 
 Build a central receiver server              Jintae built the skeleton, plumbing not 
-                                             workable yet.
+                                             workable yet.(10/16 UPDATE done and tested by Jintae)
 
 Build device / modality clients              Not Done, would be one file per signal type,
-                                             some will be easier than others.
+                                             some will be easier than others.(10/16 UPDATE EEG client done by shahd
+                                             but missing elegant shutdown, testing and port and serials)
 
 Build reusable sender                        Done, needs error handling, right now does
                                              not handle lost connections.
                                              
 Handle machine (not rate) syncing            Laid ground-work, not done yet.
 
-Add some sort of data saving / recording     Not Done.
+Add some sort of data saving / recording     Done by Jintae.
 capabilities post receival
 
 
