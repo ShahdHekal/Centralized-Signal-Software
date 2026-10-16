@@ -92,7 +92,7 @@ Build reusable sender                        Done, needs error handling, right n
                                              
 Handle machine (not rate) syncing            Laid ground-work, not done yet.
 
-Add some sort of data saving / recording     Done by Jintae.
+Add some sort of data saving / recording     Done by Jintae (10/16).
 capabilities post receival
 
 
