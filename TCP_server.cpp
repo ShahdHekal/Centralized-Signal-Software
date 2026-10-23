@@ -1,7 +1,13 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#define close closesocket
+#else
 #include <arpa/inet.h>   // inet_ntop, htons, ntohs
 #include <netinet/in.h>  // sockaddr_in, INADDR_ANY
 #include <sys/socket.h>  // socket, bind, recvfrom
 #include <unistd.h>      // close
+#endif
 
 #include <array>
 #include <cstdint>
@@ -34,7 +40,7 @@ bool read_exact(int fd, uint8_t* buf, size_t n) {
     // Keep reading until we have all n bytes.
     while (got < n) {
         // Ask for the bytes still missing, written just after the ones we have.
-        ssize_t r = recv(fd, buf + got, n - got, 0);
+        ssize_t r = recv(fd, reinterpret_cast<char*>(buf + got), static_cast<int>(n - got), 0);
 
         // 0 means the sender closed the connection cleanly.
         if (r == 0) return false;
@@ -81,6 +87,14 @@ bool read_packet(int fd, std::vector<uint8_t>& body) {
 int main(int argc, char* argv[]) {
     // Create the settings object with its defaults (port 9125, dir "sessions").
     Config cfg;
+    
+    #ifdef _WIN32
+       WSADATA wsa;
+       if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
+           std::fprintf(stderr, "WSAStartup failed\n");
+           return 1;
+       }
+    #endif
 
     // If a first argument was given, convert its text to a number and use it
     // as the port. The cast narrows int to the 16 bits a port number has.
@@ -99,7 +113,7 @@ int main(int argc, char* argv[]) {
 
     // Let the port be reused immediately after the server exits. 
     int yes = 1;
-    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
