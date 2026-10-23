@@ -1,7 +1,6 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#define close closesocket
 #else
 #include <arpa/inet.h>   // inet_ntop, htons, ntohs
 #include <netinet/in.h>  // sockaddr_in, INADDR_ANY
@@ -17,6 +16,12 @@
 
 #include <cstring>   // std::memcpy
 #include <vector>    // std::vector, to hold a packet body
+
+#ifdef _WIN32
+inline void close_socket(int s) { closesocket(s); }
+#else
+inline void close_socket(int s) { close(s); }
+#endif
 
 constexpr uint16_t kDefaultPort = 9125;
 
@@ -123,7 +128,7 @@ int main(int argc, char* argv[]) {
     // Attach the socket to that address and port.
     if (bind(listen_sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         perror("bind");
-        close(listen_sock);
+        close_socket(listen_sock);
         return 1;
     }
 
@@ -131,7 +136,7 @@ int main(int argc, char* argv[]) {
     // hold in a queue before we accept() them (we expect about 6 devices).
     if (listen(listen_sock, 8) < 0) {
         perror("listen");
-        close(listen_sock);
+        close_socket(listen_sock);
         return 1;
     }
 
@@ -149,7 +154,7 @@ int main(int argc, char* argv[]) {
     // A negative return value means the call failed.
     if (conn < 0) {
         perror("accept");
-        close(listen_sock);
+        close_socket(listen_sock);
         return 1;
     }
 
@@ -178,8 +183,8 @@ int main(int argc, char* argv[]) {
     std::printf("Sender disconnected after %llu packets\n", count);
 
     // Close the connection socket, then the listening socket.
-    close(conn);
-    close(listen_sock);
+    close_socket(conn);
+    close_socket(listen_sock);
 
     // Exit with 0, which signals success.
     return 0;
