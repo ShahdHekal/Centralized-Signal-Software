@@ -7,7 +7,7 @@ const int    BLOCK = 1;                       // change this to get differnt pac
 //const std::string SERVER_HOST = "192.168.1.10"; // random for now bc idk the cema windows ip
 const std::string SERVER_HOST = "127.0.0.1"; 
 const std::string SERVER_PORT = "9125";
-const bool        TEST_SIGNAL = true;
+const bool        TEST_SIGNAL = false;
 const char* UNICORN_SERIAL = "UN-2026.08.14"; //This is a fake serial number we just need the number on our device
 
 // Just printing out manufcturer error in lieu of an error number
