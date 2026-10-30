@@ -22,6 +22,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <memory>
+#include <sstream>
 
 namespace {
 
@@ -179,77 +182,157 @@ void midiCallback(double deltaTime,
 
 }  // namespace
 
+    
 int main() {
     try {
-        // Construct the callback context before RtMidiIn so the context remains
-        // alive until after the MIDI input object has been destroyed.
-        CallbackContext context;
-        RtMidiIn midiIn;
+        // Create an object to list available MIDI devices.
+        RtMidiIn portEnumerator;
 
-        const unsigned int portCount = midiIn.getPortCount();
+        const unsigned int portCount = portEnumerator.getPortCount();
+
         if (portCount == 0) {
-            std::cerr << "No MIDI input ports found. Connect the device, make sure "
-                         "its MIDI software is running, and restart this program.\n";
+            std::cerr << "No MIDI input ports found.\n";
             return 1;
         }
 
+        // Display all available MIDI input ports.
         std::cout << "Available MIDI input ports:\n";
+
         for (unsigned int i = 0; i < portCount; ++i) {
-            std::cout << "  [" << i << "] " << midiIn.getPortName(i) << '\n';
+            std::cout << "  [" << i << "] "
+                      << portEnumerator.getPortName(i) << '\n';
         }
 
-        std::cout << "\nEnter the number of the MIDI input to monitor: ";
+        // Ask the user which devices to monitor.
+        std::cout << "\nEnter the port numbers to monitor, separated by commas "
+                     "(example: 0, 1): ";
+
         std::string input;
-        if (!std::getline(std::cin, input)) {
-            std::cerr << "No selection received.\n";
-            return 1;
+        std::getline(std::cin, input);
+
+        // Parse the selected port numbers.
+        std::vector<unsigned int> selectedPorts;
+        std::stringstream selections(input);
+        std::string token;
+
+        while (std::getline(selections, token, ',')) {
+            const std::size_t first = token.find_first_not_of(" \t");
+
+            if (first == std::string::npos) {
+                std::cerr << "Invalid selection.\n";
+                return 1;
+            }
+
+            const std::size_t last = token.find_last_not_of(" \t");
+            token = token.substr(first, last - first + 1);
+
+            std::size_t parsedChars = 0;
+            unsigned long selected;
+
+            try {
+                selected = std::stoul(token, &parsedChars);
+            } catch (const std::exception&) {
+                std::cerr << "Invalid port number: " << token << '\n';
+                return 1;
+            }
+
+            if (parsedChars != token.size() || selected >= portCount) {
+                std::cerr << "Port number out of range.\n";
+                return 1;
+            }
+
+            unsigned int port = static_cast<unsigned int>(selected);
+
+            // Prevent selecting the same device twice.
+            if (std::find(selectedPorts.begin(),
+                          selectedPorts.end(), port) != selectedPorts.end()) {
+                std::cerr << "Port selected more than once.\n";
+                return 1;
+            }
+
+            selectedPorts.push_back(port);
         }
 
-        std::size_t parsedChars = 0;
-        unsigned long selected = 0;
-        try {
-            selected = std::stoul(input, &parsedChars);
-        } catch (const std::exception&) {
-            std::cerr << "Please enter a port number from the list.\n";
-            return 1;
-        }
-
-        if (parsedChars != input.size() || selected >= portCount) {
-            std::cerr << "Port number must be between 0 and " << (portCount - 1)
-                      << ".\n";
-            return 1;
-        }
-
-        context.portName = midiIn.getPortName(static_cast<unsigned int>(selected));
-
-        // Include SysEx as well as normal MIDI messages. This diagnostic tool
-        // also displays MIDI timing and active-sensing messages if the device
-        // sends them, so output can be very busy on some setups.
-        midiIn.ignoreTypes(false, false, false);
-        midiIn.setCallback(&midiCallback, &context);
-        midiIn.openPort(static_cast<unsigned int>(selected), "midi_probe");
-
-        std::cout << "\nListening to: " << context.portName << '\n'
-                  << "Timestamps use the monotonic clock (seconds since the "
-                     "system's steady-clock epoch), like now_seconds() in "
-                     "central_sender.cpp.\n"
-                  << "Move/press the device to generate events. Press Ctrl+C to stop.\n\n"
-                  << std::flush;
+        // Create separate MIDI input objects for each device.
+        std::vector<std::unique_ptr<CallbackContext>> contexts;
+        std::vector<std::unique_ptr<RtMidiIn>> midiInputs;
 
         std::signal(SIGINT, handleSignal);
-        while (keepRunning) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        for (unsigned int port : selectedPorts) {
+
+            // Create a separate context for each device.
+            auto context = std::make_unique<CallbackContext>();
+            context->portName = portEnumerator.getPortName(port);
+
+            // Create a separate MIDI input for each device.
+            auto midiIn = std::make_unique<RtMidiIn>();
+
+            // Receive all MIDI message types.
+            midiIn->ignoreTypes(false, false, false);
+
+            // Assign the MIDI callback.
+            midiIn->setCallback(&midiCallback, context.get());
+
+            try {
+                midiIn->openPort(port, "midi_probe");
+
+                std::cout << "Listening to: "
+                          << context->portName << '\n';
+
+                contexts.push_back(std::move(context));
+                midiInputs.push_back(std::move(midiIn));
+
+            } catch (const RtMidiError& error) {
+                midiIn->cancelCallback();
+
+                std::cerr << "Could not open "
+                          << context->portName << ": "
+                          << error.getMessage() << '\n';
+            }
         }
 
+        if (midiInputs.empty()) {
+            std::cerr << "No MIDI inputs could be opened.\n";
+            return 1;
+        }
+
+        std::cout << "\nMonitoring "
+                  << midiInputs.size()
+                  << " MIDI input(s).\n";
+
+        std::cout << "Move/press the devices to generate events. "
+                     "Press Ctrl+C to stop.\n\n";
+
+        // Keep both devices running simultaneously.
+        while (keepRunning) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(100)
+            );
+        }
+
+        // Shut down both MIDI inputs.
         std::cout << "\nStopping MIDI probe...\n";
-        midiIn.cancelCallback();
-        midiIn.closePort();
+
+        for (auto& midiIn : midiInputs) {
+            midiIn->cancelCallback();
+
+            if (midiIn->isPortOpen()) {
+                midiIn->closePort();
+            }
+        }
+
         return 0;
+
     } catch (const RtMidiError& error) {
-        std::cerr << "RtMidi error: " << error.getMessage() << '\n';
+        std::cerr << "RtMidi error: "
+                  << error.getMessage() << '\n';
         return 1;
+
     } catch (const std::exception& error) {
-        std::cerr << "Error: " << error.what() << '\n';
+        std::cerr << "Error: "
+                  << error.what() << '\n';
         return 1;
     }
 }
+
