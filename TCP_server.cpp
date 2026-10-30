@@ -119,7 +119,7 @@ void forward(const std::string& name, const std::vector<uint8_t>& body) {
     std::lock_guard<std::mutex> lock(mtx);
     std::erase_if(viewers, [&](const Viewer& v) {
         if (v.wants != name || send_packet(v.fd, body)) return false;
-        close(v.fd);
+        close_socket(v.fd);
         return true;
     });
 }
@@ -219,7 +219,7 @@ void handle_stream(int conn, sockaddr_in client) {
         }
     }
     std::printf("[%s] disconnected\n", name.c_str());
-    close(conn);
+    close_socket(conn);
 }
 
 
@@ -285,7 +285,7 @@ int main(int argc, char* argv[]) {
     while (std::filesystem::exists(cfg.out_dir + "/session" + std::to_string(number))) ++number;
     session_dir = cfg.out_dir + "/session" + std::to_string(number);
     std::filesystem::create_directories(session_dir);
-    std::printf("Recording to %s\n", session_dir.string().c_str())
+    std::printf("Recording to %s\n", session_dir.string().c_str());
     // Second listening socket, for viewers.
     int viewer_sock = socket(AF_INET, SOCK_STREAM, 0);
     setsockopt(viewer_sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
