@@ -6,7 +6,14 @@
 #include <netinet/in.h>  // sockaddr_in, INADDR_ANY
 #include <sys/socket.h>  // socket, bind, recvfrom
 #include <unistd.h>      // close
+#include <csignal>
 #endif
+
+#include <algorithm>
+#include <chrono>
+#include <map>
+#include <mutex>
+#include <thread>
 
 #include <array>
 #include <cstdint>
@@ -24,6 +31,7 @@ inline void close_socket(int s) { close(s); }
 #endif
 
 constexpr uint16_t kDefaultPort = 9125;
+constexpr uint16_t kViewerPort  = 9126;
 
 struct Config {
     uint16_t port = kDefaultPort;
@@ -87,6 +95,78 @@ bool read_packet(int fd, std::vector<uint8_t>& body) {
     return read_exact(fd, body.data(), len);
 }
 
+// Viewers: connect to kViewerPort, send a stream name ("UnicornEEG\n"),
+// then receive that stream's header and every packet after it.
+struct Viewer { int fd; std::string wants; };
+std::mutex mtx;                                       // lock to protct viewerc thread
+std::vector<Viewer> viewers;
+std::map<std::string, std::vector<uint8_t>> headers;  
+
+// Send one packet, [u32 length][body]. Returns false if the other side drops the connection.
+bool send_packet(int fd, const std::vector<uint8_t>& body) {
+    uint32_t len = static_cast<uint32_t>(body.size());
+    return send(fd, reinterpret_cast<const char*>(&len), 4, 0) == 4
+        && send(fd, reinterpret_cast<const char*>(body.data()), static_cast<int>(len), 0) == static_cast<int>(len);
+}
+
+// Pass a stream's packet to every viewer that asked for it, drops dead viewers.
+void forward(const std::string& name, const std::vector<uint8_t>& body) {
+    std::lock_guard<std::mutex> lock(mtx);
+    std::erase_if(viewers, [&](const Viewer& v) {
+        if (v.wants != name || send_packet(v.fd, body)) return false;
+        close(v.fd);
+        return true;
+    });
+}
+
+// Runs on its own thread: accepts viewers forever.
+void viewer_acceptor(int viewer_sock) {
+    while (true) {
+        int fd = accept(viewer_sock, nullptr, nullptr);
+        std::string wants;
+        uint8_t c;
+        while (read_exact(fd, &c, 1) && c != '\n') wants += char(c);
+
+        std::lock_guard<std::mutex> lock(mtx);
+        if (headers.count(wants)) send_packet(fd, headers[wants]);   // stream already running so send headercfirst
+        viewers.push_back({fd, wants});
+        std::printf("viewer connected, wants %s\n", wants.c_str());
+    }
+}
+
+// Handles one sender from connect to disconnect. Runs on its own thread.
+void handle_stream(int conn, sockaddr_in client) {
+    char ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client.sin_addr, ip, sizeof(ip));
+
+    // First packet is the header; its name is [u16 length][characters].
+    std::vector<uint8_t> body;
+    read_packet(conn, body);
+    uint16_t name_len;
+    std::memcpy(&name_len, body.data(), 2);
+    std::string name(reinterpret_cast<char*>(body.data()) + 2, name_len);
+    std::printf("[%s] connected from %s\n", name.c_str(), ip);
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        headers[name] = body;
+    }
+    forward(name, body);
+
+    // Every later packet is data. One status line per second.
+    unsigned long long count = 0;
+    auto next = std::chrono::steady_clock::now();
+    while (read_packet(conn, body)) {
+        forward(name, body);
+        if (++count, std::chrono::steady_clock::now() >= next) {
+            std::printf("[%s] %llu packets\n", name.c_str(), count);
+            next += std::chrono::seconds(1);
+        }
+    }
+    std::printf("[%s] disconnected\n", name.c_str());
+    close(conn);
+}
+
+
 // Program entry point. argc = number of command-line words (including the
 // program name); argv = the words themselves as C strings.
 int main(int argc, char* argv[]) {
@@ -99,6 +179,8 @@ int main(int argc, char* argv[]) {
            std::fprintf(stderr, "WSAStartup failed\n");
            return 1;
        }
+    #else
+       std::signal(SIGPIPE, SIG_IGN);
     #endif
 
     // If a first argument was given, convert its text to a number and use it
@@ -140,52 +222,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Tell the user the server is ready and on which port.
-    std::printf("Listening for TCP on port %u\n", cfg.port);
+    setvbuf(stdout, nullptr, _IONBF, 0);   // print each line immediately
+    std::printf("Listening for clients on port %u, viewers on %u\n", cfg.port, kViewerPort);
 
-    // Will be filled in by accept() with the sender's address and port.
-    sockaddr_in client{};
-    socklen_t client_len = sizeof(client);
+    // Second listening socket, for viewers.
+    int viewer_sock = socket(AF_INET, SOCK_STREAM, 0);
+    setsockopt(viewer_sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
+    addr.sin_port = htons(kViewerPort);
+    bind(viewer_sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    listen(viewer_sock, 8);
+    std::thread(viewer_acceptor, viewer_sock).detach();
 
-    // Block until a sender connects. Returns a NEW socket for talking to that
-    // one sender; listen_sock stays free to accept the next one.
-    int conn = accept(listen_sock, reinterpret_cast<sockaddr*>(&client), &client_len);
-
-    // A negative return value means the call failed.
-    if (conn < 0) {
-        perror("accept");
-        close_socket(listen_sock);
-        return 1;
+    // Accept senders forever, one thread each.
+    while (true) {
+        sockaddr_in client{};
+        socklen_t client_len = sizeof(client);
+        int conn = accept(listen_sock, reinterpret_cast<sockaddr*>(&client), &client_len);
+        std::thread(handle_stream, conn, client).detach();
     }
-
-    // Convert the sender's IP address to text, e.g. "127.0.0.1".
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &client.sin_addr, ip, sizeof(ip));
-
-    // Report who connected and which descriptor their socket got.
-    std::printf("Connection from %s:%u (fd %d)\n", ip, ntohs(client.sin_port), conn);
-
-    // Read packets from this sender until it disconnects.
-    // body is reused for every packet; count is how many we have read.
-    std::vector<uint8_t> body;
-    unsigned long long count = 0;
-
-    // read_packet returns false when the sender is done or something is wrong.
-    while (read_packet(conn, body)) {
-        // One more packet received.
-        count++;
-
-        // Report its number and body size.
-        std::printf("packet %llu: %zu bytes\n", count, body.size());
-    }
-
-    // The loop ended, so this sender is gone.
-    std::printf("Sender disconnected after %llu packets\n", count);
-
-    // Close the connection socket, then the listening socket.
-    close_socket(conn);
-    close_socket(listen_sock);
-
-    // Exit with 0, which signals success.
-    return 0;
 }
