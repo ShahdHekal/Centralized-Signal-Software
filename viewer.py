@@ -7,7 +7,8 @@ HOST = "127.0.0.1"     # central server
 VIEWER_PORT = 9126
 SECONDS = 20           
 
-
+#https://in.mathworks.com/products/connections/product_detail/unicorn-bi.html
+#https://www.gtec.at/wp-content/uploads/2023/10/web-unicorn-hybrid-black-hello-quickstart-2019-02-06.pdf
 LABELS = {             
     "UnicornEEG": ["Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8"]
                   + ["Acc X", "Acc Y", "Acc Z", "Gyr X", "Gyr Y", "Gyr Z", "Battery", "Counter", "Valid"],
