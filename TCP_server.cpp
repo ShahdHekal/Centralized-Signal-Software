@@ -1,3 +1,6 @@
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -32,6 +35,8 @@ inline void close_socket(int s) { close(s); }
 
 constexpr uint16_t kDefaultPort = 9125;
 constexpr uint16_t kViewerPort  = 9126;
+
+std::filesystem::path session_dir;
 
 struct Config {
     uint16_t port = kDefaultPort;
@@ -145,20 +150,71 @@ void handle_stream(int conn, sockaddr_in client) {
     uint16_t name_len;
     std::memcpy(&name_len, body.data(), 2);
     std::string name(reinterpret_cast<char*>(body.data()) + 2, name_len);
-    std::printf("[%s] connected from %s\n", name.c_str(), ip);
     {
         std::lock_guard<std::mutex> lock(mtx);
         headers[name] = body;
     }
     forward(name, body);
 
+    uint16_t channels;
+    double rate;
+    uint8_t fmt;
+    const uint8_t* h = body.data() + 2 + name_len;
+    std::memcpy(&channels, h, 2);
+    std::memcpy(&rate, h + 2, 8);
+    std::memcpy(&fmt, h + 10, 1);
+
+    std::printf("[%s] connected from %s: %u channels, %g Hz, format %u\n", name.c_str(), ip, channels, rate, fmt);
+    
+    // One CSV per stream in this session's folder. Appended to if the sender reconnects.
+    std::filesystem::path path = session_dir / (name + ".csv");
+    bool is_new = !std::filesystem::exists(path);
+    std::ofstream csv(path, std::ios::app);
+    if (is_new) {
+        csv << "time,seq";
+        if (fmt == 1) for (int c = 1; c <= channels; ++c) csv << ",ch" << c;
+        else          csv << ",status,data1,data2";
+        csv << "\n";
+    }
+
+
     // Every later packet is data. One status line per second.
     unsigned long long count = 0;
     auto next = std::chrono::steady_clock::now();
     while (read_packet(conn, body)) {
         forward(name, body);
+
+        // Data body: [u32 seq][f64 t0][data]
+        uint32_t seq;
+        double t0;
+        std::memcpy(&seq, body.data(), 4);
+        std::memcpy(&t0, body.data() + 4, 8);
+        const uint8_t* payload = body.data() + 12;
+        size_t bytes = body.size() - 12;
+
+        if (fmt == 1) {   // floats: one row per scan, each with its own time
+            for (size_t i = 0; i < bytes / (4 * channels); ++i) {
+                csv << std::fixed << std::setprecision(6) << t0 + i / rate << ',' << seq
+                    << std::defaultfloat << std::setprecision(7);
+                for (int c = 0; c < channels; ++c) {
+                    float v;
+                    std::memcpy(&v, payload + 4 * (i * channels + c), 4);
+                    csv << ',' << v;
+                }
+                csv << '\n';
+            }
+        } else {          // MIDI: one row per message, up to 3 bytes
+            csv << std::fixed << std::setprecision(6) << t0 << ',' << seq;
+            for (size_t i = 0; i < 3; ++i) {
+                csv << ',';
+                if (i < bytes) csv << int(payload[i]);
+            }
+            csv << '\n';
+        }
+
         if (++count, std::chrono::steady_clock::now() >= next) {
             std::printf("[%s] %llu packets\n", name.c_str(), count);
+            csv.flush();   // write to disk at least once a second
             next += std::chrono::seconds(1);
         }
     }
@@ -225,6 +281,11 @@ int main(int argc, char* argv[]) {
     setvbuf(stdout, nullptr, _IONBF, 0);   // print each line immediately
     std::printf("Listening for clients on port %u, viewers on %u\n", cfg.port, kViewerPort);
 
+    int number = 1;
+    while (std::filesystem::exists(cfg.out_dir + "/session" + std::to_string(number))) ++number;
+    session_dir = cfg.out_dir + "/session" + std::to_string(number);
+    std::filesystem::create_directories(session_dir);
+    std::printf("Recording to %s\n", session_dir.string().c_str())
     // Second listening socket, for viewers.
     int viewer_sock = socket(AF_INET, SOCK_STREAM, 0);
     setsockopt(viewer_sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
