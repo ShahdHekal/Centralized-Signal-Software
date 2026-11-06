@@ -6,6 +6,9 @@ g++ $FLAGS TCP_server.cpp -o TCP_server.exe -lws2_32 -lmswsock
 
 g++ $FLAGS -Ithird_party/unicorn eeg_client.cpp -o eeg_client.exe \
     -Lthird_party/unicorn -lUnicorn -lws2_32 -lmswsock
+
+g++ $FLAGS -DASIO_STANDALONE -Ithird_party/asio udp_proxy.cpp -o udp_proxy.exe -lws2_32 -lmswsock
+
 cp third_party/unicorn/Unicorn.dll .
 
 echo "built TCP_server.exe and eeg_client.exe"
