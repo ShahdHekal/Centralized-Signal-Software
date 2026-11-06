@@ -9,7 +9,9 @@ Setup (no admin needed):
     pip install mido python-rtmidi
 
 Run:
-    python3 midi_to_mid.py
+    python3 midi_to_mid.py              # records whichever devices are connected
+    python3 midi_to_mid.py airwave      # records only the Airwave
+    python3 midi_to_mid.py keyboard     # records only the keyboard
 It prints the MIDI inputs it can see, then records until you press Ctrl+C.
 The file is also saved every few seconds, so a crash loses at most the last
 few seconds of playing.
@@ -45,21 +47,30 @@ SKIP = {"clock", "active_sensing", "sysex"}
 AUTOSAVE_SECONDS = 10
 
 
-def find_ports():
+def find_ports(wanted):
+    """Find the MIDI input for each wanted device. Devices that aren't
+    connected are skipped; the script only stops if none are found."""
     names = mido.get_input_names()
     print("MIDI inputs found:")
     for name in names:
         print("   ", name)
+    print()
 
     chosen = {}
     for device, part in PORTS.items():
+        if device not in wanted:
+            continue
         match = next((n for n in names
                       if part.lower() in n.lower() and n not in chosen.values()),
                      None)
         if match is None:
-            sys.exit(f"\nNo input matching '{part}' for {device}. "
-                     "Edit PORTS at the top of this script.")
-        chosen[device] = match
+            print(f"No input matching '{part}', so {device} won't be recorded.")
+        else:
+            chosen[device] = match
+
+    if not chosen:
+        sys.exit("No devices to record. Check the connections, or edit PORTS "
+                 "at the top of this script to match the names listed above.")
     return chosen
 
 
@@ -70,7 +81,8 @@ def build_file(recorded):
     event's absolute time is converted to ticks and then to a gap.
     """
     mid = mido.MidiFile(type=1, ticks_per_beat=TICKS_PER_BEAT)
-    for i, device in enumerate(TRACK_ORDER):
+    devices = [d for d in TRACK_ORDER if d in recorded]  # one track per recorded device
+    for i, device in enumerate(devices):
         track = mido.MidiTrack()
         track.append(mido.MetaMessage("track_name", name=device, time=0))
         if i == 0:  # the tempo goes in the first track
@@ -94,7 +106,14 @@ def save(recorded, filename):
 
 
 def main():
-    chosen = find_ports()
+    # Devices named on the command line, or every device if none are named.
+    wanted = sys.argv[1:] or TRACK_ORDER
+    unknown = [d for d in wanted if d not in PORTS]
+    if unknown:
+        sys.exit(f"Unknown device {', '.join(unknown)}. "
+                 f"Choose from: {', '.join(TRACK_ORDER)}")
+
+    chosen = find_ports(wanted)
     events = queue.Queue()
     t0 = time.perf_counter()
 
@@ -106,7 +125,7 @@ def main():
         ports.append(mido.open_input(name, callback=callback))
         print(f"Recording {device}: {name}")
 
-    recorded = {device: [] for device in TRACK_ORDER}
+    recorded = {device: [] for device in TRACK_ORDER if device in chosen}
     filename = datetime.now().strftime("midi_session_%Y%m%d_%H%M%S.mid")
     print(f"\nWriting to {filename}. Press Ctrl+C to stop.")
 
@@ -134,7 +153,7 @@ def main():
             take(events.get_nowait())
         save(recorded, filename)
 
-    counts = ", ".join(f"{len(recorded[d])} {d}" for d in TRACK_ORDER)
+    counts = ", ".join(f"{len(events)} {d}" for d, events in recorded.items())
     print(f"\nSaved {counts} events to {filename}")
 
 
