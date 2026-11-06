@@ -173,7 +173,7 @@ void handle_stream(int conn, sockaddr_in client) {
     if (is_new) {
         csv << "time,seq";
         if (fmt == 1) for (int c = 1; c <= channels; ++c) csv << ",ch" << c;
-        else          csv << ",status,data1,data2";
+        else          csv << ",device,status,data1,data2";
         csv << "\n";
     }
 
@@ -205,7 +205,7 @@ void handle_stream(int conn, sockaddr_in client) {
             }
         } else {          // MIDI: one row per message, up to 3 bytes
             csv << std::fixed << std::setprecision(6) << t0 << ',' << seq;
-            for (size_t i = 0; i < 3; ++i) {
+            for (size_t i = 0; i < 4; ++i) {
                 csv << ',';
                 if (i < bytes) csv << int(payload[i]);
             }

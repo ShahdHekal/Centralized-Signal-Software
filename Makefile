@@ -1,5 +1,5 @@
 CXX      := clang++
-CXXFLAGS := -std=c++17 -Wall -Wextra -g
+CXXFLAGS := -std=c++20 -Wall -Wextra -g
 
 TARGETS := TCP_server
 
